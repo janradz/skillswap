@@ -1,0 +1,75 @@
+services:
+  database:
+    image: 'postgres:16'
+    environment:
+      POSTGRES_DB: skillswap_pg
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?Set SPRING_DATASOURCE_PASSWORD in .env}
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck: # <-- ADD HEALTHCHECK
+      test: ["CMD-SHELL", "pg_isready -U admin -d skillswap_pg"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app: # <-- ADD APP SERVICE
+    image: 'skillswap-app'
+    profiles: ["demo"]
+    ports:
+      - '127.0.0.1:8080:8080'
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://database:5432/skillswap_pg
+      SPRING_DATASOURCE_USERNAME: admin
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?Set SPRING_DATASOURCE_PASSWORD in .env}
+      SPRING_DOCKER_COMPOSE_ENABLED: 'false'
+    depends_on:
+      database:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: skillswap-ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  ollama-init:
+    image: curlimages/curl:latest
+    container_name: skillswap-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["sh", "-c", "curl -s http://ollama:11434/api/pull -d '{\"name\":\"llama3.2\"}'"]
+    restart: "no"
+
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.1
+    container_name: skillswap-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_HEALTH_ENABLED: 'true'
+    ports:
+      - "127.0.0.1:8081:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:z
+
+volumes:
+  postgres_data:
+  ollama_data:
